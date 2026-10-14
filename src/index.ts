@@ -16,3 +16,4 @@ export function createKiroNative(_options: Record<string, unknown> = {}): KiroNa
 
 export default createKiroNative
 export { KiroNativeLanguageModel }
+export { login, loadAuth, listModels } from "./kiro.js"

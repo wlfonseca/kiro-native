@@ -1,6 +1,7 @@
 // src/kiro.ts
 import { homedir } from "os";
 import { join } from "path";
+var MANAGEMENT = "https://management.us-east-1.kiro.dev";
 var RUNTIME = "https://runtime.us-east-1.kiro.dev";
 function ua(api) {
   return `aws-sdk-rust/1.3.15 ua/2.1 api/${api} os/linux lang/rust/1.92.0 md/appVersion-2.30.0 app/AmazonQ-For-CLI acp-client/opencode-kiro`;
@@ -65,6 +66,10 @@ async function readSqliteValue(dbPath, key, table = "auth_kv") {
 var DB_PATH = join(homedir(), ".local", "share", "kiro-cli", "data.sqlite3");
 var TOKEN_KEY = "kirocli:odic:token";
 var REG_KEY = "kirocli:odic:device-registration";
+var NATIVE_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "kiro-native");
+var NATIVE_STORE = join(NATIVE_DIR, "auth.json");
+var SCOPES = ["codewhisperer:completions", "codewhisperer:analysis", "codewhisperer:conversations"];
+var DEFAULT_START_URL = "https://onnuage.awsapps.com/start";
 async function writeSqliteValue(key, value) {
   try {
     const { Database } = await import("bun:sqlite");
@@ -82,61 +87,189 @@ async function writeSqliteValue(key, value) {
   } catch {
   }
 }
-async function refreshToken(tok) {
+async function readNative() {
+  var _a;
+  try {
+    const fs = await import("fs");
+    const d = JSON.parse(fs.readFileSync(NATIVE_STORE, "utf8"));
+    if (!((_a = d == null ? void 0 : d.token) == null ? void 0 : _a.access_token)) return void 0;
+    return { tok: d.token, reg: d.registration, profileArn: d.profileArn, source: "native" };
+  } catch {
+    return void 0;
+  }
+}
+async function writeNative(src) {
+  const fs = await import("fs");
+  fs.mkdirSync(NATIVE_DIR, { recursive: true });
+  let existing = {};
+  try {
+    existing = JSON.parse(fs.readFileSync(NATIVE_STORE, "utf8"));
+  } catch {
+  }
+  const out = {
+    token: src.tok,
+    registration: src.reg ?? existing.registration,
+    profileArn: src.profileArn ?? existing.profileArn
+  };
+  fs.writeFileSync(NATIVE_STORE, JSON.stringify(out, null, 2), { mode: 384 });
+}
+async function readKiroCli() {
+  const raw = await readSqliteValue(DB_PATH, TOKEN_KEY);
+  if (!raw) return void 0;
+  const tok = JSON.parse(raw);
+  let reg;
   const regRaw = await readSqliteValue(DB_PATH, REG_KEY);
-  if (!regRaw || !tok.refresh_token) throw new Error("cannot refresh: missing device-registration or refresh_token");
-  const reg = JSON.parse(regRaw);
-  const region = tok.region ?? reg.region ?? "us-east-1";
+  if (regRaw) reg = JSON.parse(regRaw);
+  return { tok, reg, source: "kirocli" };
+}
+async function loadSource() {
+  const src = await readNative() ?? await readKiroCli();
+  if (!src) throw new Error("sem login Kiro \u2014 rode `npm run login` aqui (ou `kiro-cli login`)");
+  return src;
+}
+async function persist(src) {
+  if (src.source === "native") await writeNative({ tok: src.tok, reg: src.reg, profileArn: src.profileArn });
+  else await writeSqliteValue(TOKEN_KEY, JSON.stringify(src.tok));
+}
+async function refreshToken(src) {
+  if (!src.reg || !src.tok.refresh_token) throw new Error("cannot refresh: missing registration or refresh_token");
+  const region = src.tok.region ?? src.reg.region ?? "us-east-1";
   const res = await fetch(`https://oidc.${region}.amazonaws.com/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      clientId: reg.client_id,
-      clientSecret: reg.client_secret,
+      clientId: src.reg.client_id,
+      clientSecret: src.reg.client_secret,
       grantType: "refresh_token",
-      refreshToken: tok.refresh_token
+      refreshToken: src.tok.refresh_token
     })
   });
   if (!res.ok) throw new Error(`OIDC refresh ${res.status}: ${await res.text()}`);
   const data = await res.json();
-  const updated = {
-    ...tok,
+  src.tok = {
+    ...src.tok,
     access_token: data.accessToken,
     expires_at: new Date(Date.now() + data.expiresIn * 1e3).toISOString(),
-    refresh_token: data.refreshToken ?? tok.refresh_token
+    refresh_token: data.refreshToken ?? src.tok.refresh_token
   };
-  await writeSqliteValue(TOKEN_KEY, JSON.stringify(updated));
-  return updated;
+  await persist(src);
+  return src;
 }
 var cached;
-var profileArnCache;
-async function resolveProfileArn() {
+async function resolveProfileArn(src) {
   if (process.env.KIRO_PROFILE_ARN) return process.env.KIRO_PROFILE_ARN;
-  if (profileArnCache) return profileArnCache;
+  if (src.profileArn) return src.profileArn;
   const raw = await readSqliteValue(DB_PATH, "api.codewhisperer.profile", "state");
-  if (!raw) throw new Error("kiro profile not found (run `kiro-cli login`, or set KIRO_PROFILE_ARN)");
-  const arn = JSON.parse(raw).arn;
-  if (!arn) throw new Error("kiro profile arn missing in state");
-  profileArnCache = arn;
-  return arn;
+  if (raw) {
+    const arn2 = JSON.parse(raw).arn;
+    if (arn2) return arn2;
+  }
+  const arn = await firstProfileArn(src.tok);
+  if (arn) {
+    if (src.source === "native") {
+      src.profileArn = arn;
+      await writeNative({ tok: src.tok, reg: src.reg, profileArn: arn });
+    }
+    return arn;
+  }
+  throw new Error("perfil Kiro n\xE3o encontrado (defina KIRO_PROFILE_ARN ou rode o login)");
 }
 async function loadAuth(force = false) {
   if (!force && cached && Date.now() < cached.until) return cached.auth;
-  const raw = await readSqliteValue(DB_PATH, TOKEN_KEY);
-  if (!raw) throw new Error("kiro token not found in auth_kv");
-  let tok = JSON.parse(raw);
-  const expMs = tok.expires_at ? Date.parse(tok.expires_at) : 0;
+  let src = await loadSource();
+  const expMs = src.tok.expires_at ? Date.parse(src.tok.expires_at) : 0;
   if (force || !expMs || expMs - Date.now() < 12e4) {
     try {
-      tok = await refreshToken(tok);
+      src = await refreshToken(src);
     } catch (e) {
       if (!expMs || expMs < Date.now()) throw e;
     }
   }
-  const auth = { accessToken: tok.access_token, profileArn: await resolveProfileArn() };
-  const newExp = tok.expires_at ? Date.parse(tok.expires_at) : Date.now() + 6e4;
+  const auth = { accessToken: src.tok.access_token, profileArn: await resolveProfileArn(src) };
+  const newExp = src.tok.expires_at ? Date.parse(src.tok.expires_at) : Date.now() + 6e4;
   cached = { auth, until: Math.min(newExp - 6e4, Date.now() + 3e5) };
   return auth;
+}
+async function firstProfileArn(tok) {
+  var _a, _b;
+  const region = tok.region ?? "us-east-1";
+  try {
+    const res = await fetch(`https://management.${region}.kiro.dev/`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tok.access_token}`,
+        "Content-Type": "application/x-amz-json-1.0",
+        "X-Amz-Target": "KiroControlPlaneBearerService.ListAvailableProfiles",
+        "User-Agent": ua("kirocontrolplanebearer/0.1.0"),
+        "x-amz-user-agent": xua("kirocontrolplanebearer/0.1.0")
+      },
+      body: JSON.stringify({ origin: "KIRO_CLI" })
+    });
+    if (!res.ok) return void 0;
+    const d = await res.json();
+    return (_b = (_a = d.profiles) == null ? void 0 : _a[0]) == null ? void 0 : _b.arn;
+  } catch {
+    return void 0;
+  }
+}
+async function login(opts = {}) {
+  const region = opts.region ?? process.env.KIRO_REGION ?? "us-east-1";
+  let startUrl = opts.startUrl ?? process.env.KIRO_START_URL;
+  if (!startUrl) {
+    try {
+      const s = await readSqliteValue(DB_PATH, "auth.idc.start-url", "state");
+      startUrl = s ? JSON.parse(s) : DEFAULT_START_URL;
+    } catch {
+      startUrl = DEFAULT_START_URL;
+    }
+  }
+  const oidc = `https://oidc.${region}.amazonaws.com`;
+  const post = async (path, body) => {
+    const r = await fetch(oidc + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const t = await r.text();
+    let j = {};
+    try {
+      j = t ? JSON.parse(t) : {};
+    } catch {
+    }
+    if (!r.ok && !j.error) throw new Error(`${path} ${r.status}: ${t}`);
+    return { status: r.status, ...j };
+  };
+  const reg = await post("/client/register", { clientName: "kiro-native", clientType: "public", scopes: SCOPES });
+  const dev = await post("/device_authorization", { clientId: reg.clientId, clientSecret: reg.clientSecret, startUrl });
+  console.log(`
+Abra e aprove:
+  ${dev.verificationUriComplete}
+  (c\xF3digo: ${dev.userCode})
+`);
+  let interval = (dev.interval ?? 5) * 1e3;
+  const deadline = Date.now() + (dev.expiresIn ?? 600) * 1e3;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, interval));
+    const tr = await post("/token", {
+      clientId: reg.clientId,
+      clientSecret: reg.clientSecret,
+      grantType: "urn:ietf:params:oauth:grant-type:device_code",
+      deviceCode: dev.deviceCode
+    });
+    if (tr.accessToken) {
+      const tok = {
+        access_token: tr.accessToken,
+        refresh_token: tr.refreshToken,
+        expires_at: new Date(Date.now() + tr.expiresIn * 1e3).toISOString(),
+        region,
+        start_url: startUrl
+      };
+      const registration = { client_id: reg.clientId, client_secret: reg.clientSecret, region };
+      const profileArn = await firstProfileArn(tok);
+      await writeNative({ tok, reg: registration, profileArn });
+      console.log(`login ok${profileArn ? "" : " (defina KIRO_PROFILE_ARN \u2014 perfil n\xE3o resolvido)"} \u2192 ${NATIVE_STORE}`);
+      return;
+    }
+    if (tr.error === "slow_down") interval += 5e3;
+    else if (tr.error && tr.error !== "authorization_pending") throw new Error(`login falhou: ${tr.error} ${tr.error_description ?? ""}`);
+  }
+  throw new Error("login expirou sem aprova\xE7\xE3o");
 }
 function amzHeaders(auth, target, api) {
   return {
@@ -151,6 +284,18 @@ function amzHeaders(auth, target, api) {
     "amz-sdk-invocation-id": crypto.randomUUID(),
     Accept: "*/*"
   };
+}
+async function listModels() {
+  const send = async (auth) => fetch(MANAGEMENT + "/", {
+    method: "POST",
+    headers: amzHeaders(auth, "KiroControlPlaneBearerService.ListAvailableModels", "kirocontrolplanebearer/0.1.0"),
+    body: JSON.stringify({ origin: "KIRO_CLI", profileArn: auth.profileArn })
+  });
+  let res = await send(await loadAuth());
+  if (res.status === 401 || res.status === 403) res = await send(await loadAuth(true));
+  if (!res.ok) throw new Error(`ListAvailableModels ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.models ?? [];
 }
 function parseHeaders(buf) {
   const out = {};
@@ -440,5 +585,8 @@ var index_default = createKiroNative;
 export {
   KiroNativeLanguageModel,
   createKiroNative,
-  index_default as default
+  index_default as default,
+  listModels,
+  loadAuth,
+  login
 };

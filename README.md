@@ -11,7 +11,7 @@ The existing integration path runs `kiro-cli` as a subprocess and talks the Agen
 ## Requirements
 
 - opencode v2 (tested on 2.0.26)
-- A working `kiro-cli` **login** (run `kiro-cli login` once). This package only reads the token `kiro-cli` stores; it never spawns `kiro-cli`.
+- A Kiro login. Either run this package's own login (`npm run login`, below) — no `kiro-cli` needed — or reuse an existing `kiro-cli login`. Either way the provider never spawns `kiro-cli`.
 
 ## Install
 
@@ -133,9 +133,21 @@ Add the provider to your opencode config (`~/.config/opencode/opencode.json`), p
 
 The `models` value is a JSON **object** (not a string) — the block above is the full catalog, also in [`models.json`](./models.json). Regenerate it from the live catalog with `listModels()` in `src/kiro.ts`. Then select `kiro-native/glm-5` (or any model) in opencode.
 
+## Login
+
+This package can do the Kiro login itself (AWS SSO OIDC device flow), so `kiro-cli` is optional:
+
+```bash
+npm run login
+```
+
+It prints a URL + code; open it, approve, done. The token is stored in `~/.local/share/kiro-native/auth.json` and refreshed automatically. Env overrides: `KIRO_START_URL` (default `https://onnuage.awsapps.com/start`), `KIRO_REGION` (default `us-east-1`), `KIRO_PROFILE_ARN` (if the profile can't be resolved automatically).
+
+If you already use `kiro-cli`, you can skip this — the provider falls back to the token `kiro-cli` stores.
+
 ## How it works
 
-- **Auth**: reads the bearer token from `~/.local/share/kiro-cli/data.sqlite3` (`auth_kv` table). Refreshes it automatically via AWS SSO OIDC when it is about to expire or on a `401/403`, and writes the rotated token back so `kiro-cli` stays in sync.
+- **Auth**: uses the token from this package's own login (`~/.local/share/kiro-native/auth.json`) when present, otherwise falls back to the one `kiro-cli` stores (`~/.local/share/kiro-cli/data.sqlite3`). Refreshes automatically via AWS SSO OIDC when near expiry or on `401/403`, writing the rotated token back to whichever store it came from.
 - **Models**: `KiroControlPlaneBearerService.ListAvailableModels` on `management.<region>.kiro.dev`.
 - **Chat**: `AmazonCodeWhispererStreamingService.GenerateAssistantResponse` on `runtime.<region>.kiro.dev`, parsing the `application/vnd.amazon.eventstream` response into AI SDK stream parts (`text-delta`, `tool-call`, `finish`).
 - **Tools**: opencode tools map to Kiro `toolSpecification`; `toolUseEvent`s map back to AI SDK tool calls; results flow back as `toolResults`.

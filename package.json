@@ -17,7 +17,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --clean"
+    "build": "tsup src/index.ts --format esm --clean",
+    "login": "node bin/kiro-native.mjs login"
   },
   "devDependencies": {
     "tsup": "^8.0.0",
@@ -44,5 +45,8 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "bin": {
+    "kiro-native": "bin/kiro-native.mjs"
   }
 }
