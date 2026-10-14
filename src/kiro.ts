@@ -231,15 +231,30 @@ export async function login(opts: { startUrl?: string; region?: string } = {}): 
     if (!r.ok && !j.error) throw new Error(`${path} ${r.status}: ${t}`)
     return { status: r.status, ...j }
   }
-  const reg = await post("/client/register", { clientName: "kiro-native", clientType: "public", scopes: SCOPES })
-  const dev = await post("/device_authorization", { clientId: reg.clientId, clientSecret: reg.clientSecret, startUrl })
+  let clientId: string
+  let clientSecret: string
+  let secretExpiresAt: number | undefined
+  const prev = (await readNative())?.reg as (Registration & { client_secret_expires_at?: number }) | undefined
+  const prevValid = prev?.client_id && prev?.client_secret &&
+    (!prev.client_secret_expires_at || prev.client_secret_expires_at * 1000 > Date.now() + 60_000)
+  if (prevValid) {
+    clientId = prev!.client_id
+    clientSecret = prev!.client_secret
+    secretExpiresAt = prev!.client_secret_expires_at
+  } else {
+    const reg = await post("/client/register", { clientName: "kiro-native", clientType: "public", scopes: SCOPES })
+    clientId = reg.clientId
+    clientSecret = reg.clientSecret
+    secretExpiresAt = reg.clientSecretExpiresAt
+  }
+  const dev = await post("/device_authorization", { clientId, clientSecret, startUrl })
   console.log(`\nAbra e aprove:\n  ${dev.verificationUriComplete}\n  (código: ${dev.userCode})\n`)
   let interval = (dev.interval ?? 5) * 1000
   const deadline = Date.now() + (dev.expiresIn ?? 600) * 1000
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, interval))
     const tr = await post("/token", {
-      clientId: reg.clientId, clientSecret: reg.clientSecret,
+      clientId, clientSecret,
       grantType: "urn:ietf:params:oauth:grant-type:device_code", deviceCode: dev.deviceCode,
     })
     if (tr.accessToken) {
@@ -249,7 +264,7 @@ export async function login(opts: { startUrl?: string; region?: string } = {}): 
         expires_at: new Date(Date.now() + tr.expiresIn * 1000).toISOString(),
         region, start_url: startUrl,
       }
-      const registration: Registration = { client_id: reg.clientId, client_secret: reg.clientSecret, region }
+      const registration: Registration & { client_secret_expires_at?: number } = { client_id: clientId, client_secret: clientSecret, region, client_secret_expires_at: secretExpiresAt }
       const profileArn = await firstProfileArn(tok)
       await writeNative({ tok, reg: registration, profileArn })
       console.log(`login ok${profileArn ? "" : " (defina KIRO_PROFILE_ARN — perfil não resolvido)"} → ${NATIVE_STORE}`)
