@@ -1,7 +1,7 @@
 {
   "name": "kiro-native",
   "version": "0.1.0",
-  "description": "Native opencode provider for Kiro models (direct kiro.dev API, no kiro-cli subprocess)",
+  "description": "Native opencode provider for Kiro models \u2014 direct kiro.dev API, no kiro-cli subprocess",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -13,12 +13,36 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --clean"
   },
   "devDependencies": {
     "tsup": "^8.0.0",
     "typescript": "^5.7.0"
+  },
+  "license": "MIT",
+  "author": "Wellington Fonseca",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wlfonseca/kiro-native.git"
+  },
+  "homepage": "https://github.com/wlfonseca/kiro-native#readme",
+  "bugs": {
+    "url": "https://github.com/wlfonseca/kiro-native/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-provider",
+    "kiro",
+    "ai-sdk",
+    "glm",
+    "claude",
+    "amazon-q"
+  ],
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -8,8 +8,9 @@ function ua(api) {
 function xua(api) {
   return `aws-sdk-rust/1.3.15 ua/2.1 api/${api} os/linux lang/rust/1.92.0 m/F app/AmazonQ-For-CLI`;
 }
-async function readSqliteValue(dbPath, key) {
+async function readSqliteValue(dbPath, key, table = "auth_kv") {
   const errs = [];
+  const sql = `select value from ${table} where key = ?`;
   const tryCopy = async () => {
     const fs = await import("fs");
     const os = await import("os");
@@ -28,7 +29,7 @@ async function readSqliteValue(dbPath, key) {
     try {
       const { Database } = await import("bun:sqlite");
       const db = new Database(p, { readonly: true });
-      const row = db.query("select value from auth_kv where key = ?").get(key);
+      const row = db.query(sql).get(key);
       db.close();
       return row == null ? void 0 : row.value;
     } catch (e) {
@@ -37,7 +38,7 @@ async function readSqliteValue(dbPath, key) {
     try {
       const sqlite = await import("sqlite");
       const db = new sqlite.DatabaseSync(p, { readOnly: true });
-      const row = db.prepare("select value from auth_kv where key = ?").get(key);
+      const row = db.prepare(sql).get(key);
       db.close();
       return row == null ? void 0 : row.value;
     } catch (e) {
@@ -61,7 +62,6 @@ async function readSqliteValue(dbPath, key) {
   if (errs.length) throw new Error("sqlite read failed: " + errs.join(" | "));
   return void 0;
 }
-var PROFILE_ARN = "arn:aws:codewhisperer:us-east-1:633817512232:profile/3WUKKGNRPYVP";
 var DB_PATH = join(homedir(), ".local", "share", "kiro-cli", "data.sqlite3");
 var TOKEN_KEY = "kirocli:odic:token";
 var REG_KEY = "kirocli:odic:device-registration";
@@ -109,6 +109,17 @@ async function refreshToken(tok) {
   return updated;
 }
 var cached;
+var profileArnCache;
+async function resolveProfileArn() {
+  if (process.env.KIRO_PROFILE_ARN) return process.env.KIRO_PROFILE_ARN;
+  if (profileArnCache) return profileArnCache;
+  const raw = await readSqliteValue(DB_PATH, "api.codewhisperer.profile", "state");
+  if (!raw) throw new Error("kiro profile not found (run `kiro-cli login`, or set KIRO_PROFILE_ARN)");
+  const arn = JSON.parse(raw).arn;
+  if (!arn) throw new Error("kiro profile arn missing in state");
+  profileArnCache = arn;
+  return arn;
+}
 async function loadAuth(force = false) {
   if (!force && cached && Date.now() < cached.until) return cached.auth;
   const raw = await readSqliteValue(DB_PATH, TOKEN_KEY);
@@ -122,7 +133,7 @@ async function loadAuth(force = false) {
       if (!expMs || expMs < Date.now()) throw e;
     }
   }
-  const auth = { accessToken: tok.access_token, profileArn: PROFILE_ARN };
+  const auth = { accessToken: tok.access_token, profileArn: await resolveProfileArn() };
   const newExp = tok.expires_at ? Date.parse(tok.expires_at) : Date.now() + 6e4;
   cached = { auth, until: Math.min(newExp - 6e4, Date.now() + 3e5) };
   return auth;

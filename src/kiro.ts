@@ -16,8 +16,9 @@ export interface KiroAuth {
   profileArn: string
 }
 
-async function readSqliteValue(dbPath: string, key: string): Promise<string | undefined> {
+async function readSqliteValue(dbPath: string, key: string, table = "auth_kv"): Promise<string | undefined> {
   const errs: string[] = []
+  const sql = `select value from ${table} where key = ?`
   const tryCopy = async (): Promise<string> => {
     const fs = await import("node:fs")
     const os = await import("node:os")
@@ -33,14 +34,14 @@ async function readSqliteValue(dbPath: string, key: string): Promise<string | un
     try {
       const { Database } = await import("bun:sqlite")
       const db = new (Database as any)(p, { readonly: true })
-      const row = db.query("select value from auth_kv where key = ?").get(key) as { value?: string } | null
+      const row = db.query(sql).get(key) as { value?: string } | null
       db.close()
       return row?.value
     } catch (e: any) { errs.push("bun:sqlite " + (e?.message ?? e)) }
     try {
       const sqlite = await import("node:sqlite")
       const db = new (sqlite as any).DatabaseSync(p, { readOnly: true })
-      const row = db.prepare("select value from auth_kv where key = ?").get(key) as { value?: string } | undefined
+      const row = db.prepare(sql).get(key) as { value?: string } | undefined
       db.close()
       return row?.value
     } catch (e: any) { errs.push("node:sqlite " + (e?.message ?? e)) }
@@ -58,7 +59,6 @@ async function readSqliteValue(dbPath: string, key: string): Promise<string | un
   return undefined
 }
 
-const PROFILE_ARN = "arn:aws:codewhisperer:us-east-1:633817512232:profile/3WUKKGNRPYVP"
 const DB_PATH = join(homedir(), ".local", "share", "kiro-cli", "data.sqlite3")
 const TOKEN_KEY = "kirocli:odic:token"
 const REG_KEY = "kirocli:odic:device-registration"
@@ -115,6 +115,18 @@ async function refreshToken(tok: StoredToken): Promise<StoredToken> {
 }
 
 let cached: { auth: KiroAuth; until: number } | undefined
+let profileArnCache: string | undefined
+
+async function resolveProfileArn(): Promise<string> {
+  if (process.env.KIRO_PROFILE_ARN) return process.env.KIRO_PROFILE_ARN
+  if (profileArnCache) return profileArnCache
+  const raw = await readSqliteValue(DB_PATH, "api.codewhisperer.profile", "state")
+  if (!raw) throw new Error("kiro profile not found (run `kiro-cli login`, or set KIRO_PROFILE_ARN)")
+  const arn = (JSON.parse(raw) as { arn?: string }).arn
+  if (!arn) throw new Error("kiro profile arn missing in state")
+  profileArnCache = arn
+  return arn
+}
 
 export async function loadAuth(force = false): Promise<KiroAuth> {
   if (!force && cached && Date.now() < cached.until) return cached.auth
@@ -125,7 +137,7 @@ export async function loadAuth(force = false): Promise<KiroAuth> {
   if (force || !expMs || expMs - Date.now() < 120_000) {
     try { tok = await refreshToken(tok) } catch (e) { if (!expMs || expMs < Date.now()) throw e }
   }
-  const auth: KiroAuth = { accessToken: tok.access_token, profileArn: PROFILE_ARN }
+  const auth: KiroAuth = { accessToken: tok.access_token, profileArn: await resolveProfileArn() }
   const newExp = tok.expires_at ? Date.parse(tok.expires_at) : Date.now() + 60_000
   cached = { auth, until: Math.min(newExp - 60_000, Date.now() + 300_000) }
   return auth
