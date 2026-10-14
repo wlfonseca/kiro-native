@@ -213,7 +213,32 @@ async function firstProfileArn(tok: StoredToken): Promise<string | undefined> {
   } catch { return undefined }
 }
 
-export async function login(opts: { startUrl?: string; region?: string } = {}): Promise<void> {
+export interface LoginBegin {
+  url: string
+  userCode: string
+  deviceCode: string
+  clientId: string
+  clientSecret: string
+  secretExpiresAt?: number
+  region: string
+  startUrl: string
+  intervalMs: number
+  expiresAt: number
+}
+
+function oidcPost(region: string, path: string, body: any): Promise<any> {
+  return fetch(`https://oidc.${region}.amazonaws.com${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }).then(async (r) => {
+    const t = await r.text()
+    let j: any = {}
+    try { j = t ? JSON.parse(t) : {} } catch {}
+    if (!r.ok && !j.error) throw new Error(`${path} ${r.status}: ${t}`)
+    return { status: r.status, ...j }
+  })
+}
+
+export async function beginLogin(opts: { startUrl?: string; region?: string } = {}): Promise<LoginBegin> {
   const region = opts.region ?? process.env.KIRO_REGION ?? "us-east-1"
   let startUrl = opts.startUrl ?? process.env.KIRO_START_URL
   if (!startUrl) {
@@ -222,58 +247,52 @@ export async function login(opts: { startUrl?: string; region?: string } = {}): 
       startUrl = s ? JSON.parse(s) : DEFAULT_START_URL
     } catch { startUrl = DEFAULT_START_URL }
   }
-  const oidc = `https://oidc.${region}.amazonaws.com`
-  const post = async (path: string, body: any): Promise<any> => {
-    const r = await fetch(oidc + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
-    const t = await r.text()
-    let j: any = {}
-    try { j = t ? JSON.parse(t) : {} } catch {}
-    if (!r.ok && !j.error) throw new Error(`${path} ${r.status}: ${t}`)
-    return { status: r.status, ...j }
-  }
-  let clientId: string
-  let clientSecret: string
-  let secretExpiresAt: number | undefined
+  let clientId: string, clientSecret: string, secretExpiresAt: number | undefined
   const prev = (await readNative())?.reg as (Registration & { client_secret_expires_at?: number }) | undefined
   const prevValid = prev?.client_id && prev?.client_secret &&
     (!prev.client_secret_expires_at || prev.client_secret_expires_at * 1000 > Date.now() + 60_000)
   if (prevValid) {
-    clientId = prev!.client_id
-    clientSecret = prev!.client_secret
-    secretExpiresAt = prev!.client_secret_expires_at
+    clientId = prev!.client_id; clientSecret = prev!.client_secret; secretExpiresAt = prev!.client_secret_expires_at
   } else {
-    const reg = await post("/client/register", { clientName: "kiro-native", clientType: "public", scopes: SCOPES })
-    clientId = reg.clientId
-    clientSecret = reg.clientSecret
-    secretExpiresAt = reg.clientSecretExpiresAt
+    const reg = await oidcPost(region, "/client/register", { clientName: "kiro-native", clientType: "public", scopes: SCOPES })
+    clientId = reg.clientId; clientSecret = reg.clientSecret; secretExpiresAt = reg.clientSecretExpiresAt
   }
-  const dev = await post("/device_authorization", { clientId, clientSecret, startUrl })
-  console.log(`\nAbra e aprove:\n  ${dev.verificationUriComplete}\n  (código: ${dev.userCode})\n`)
-  let interval = (dev.interval ?? 5) * 1000
-  const deadline = Date.now() + (dev.expiresIn ?? 600) * 1000
-  while (Date.now() < deadline) {
+  const dev = await oidcPost(region, "/device_authorization", { clientId, clientSecret, startUrl })
+  return {
+    url: dev.verificationUriComplete, userCode: dev.userCode, deviceCode: dev.deviceCode,
+    clientId, clientSecret, secretExpiresAt, region, startUrl,
+    intervalMs: (dev.interval ?? 5) * 1000, expiresAt: Date.now() + (dev.expiresIn ?? 600) * 1000,
+  }
+}
+
+export async function completeLogin(b: LoginBegin): Promise<{ profileArn?: string; accessToken: string; refreshToken?: string; expiresAt: string }> {
+  let interval = b.intervalMs
+  while (Date.now() < b.expiresAt) {
     await new Promise((r) => setTimeout(r, interval))
-    const tr = await post("/token", {
-      clientId, clientSecret,
-      grantType: "urn:ietf:params:oauth:grant-type:device_code", deviceCode: dev.deviceCode,
+    const tr = await oidcPost(b.region, "/token", {
+      clientId: b.clientId, clientSecret: b.clientSecret,
+      grantType: "urn:ietf:params:oauth:grant-type:device_code", deviceCode: b.deviceCode,
     })
     if (tr.accessToken) {
-      const tok: StoredToken = {
-        access_token: tr.accessToken,
-        refresh_token: tr.refreshToken,
-        expires_at: new Date(Date.now() + tr.expiresIn * 1000).toISOString(),
-        region, start_url: startUrl,
-      }
-      const registration: Registration & { client_secret_expires_at?: number } = { client_id: clientId, client_secret: clientSecret, region, client_secret_expires_at: secretExpiresAt }
+      const expiresAt = new Date(Date.now() + tr.expiresIn * 1000).toISOString()
+      const tok: StoredToken = { access_token: tr.accessToken, refresh_token: tr.refreshToken, expires_at: expiresAt, region: b.region, start_url: b.startUrl }
+      const registration: Registration & { client_secret_expires_at?: number } = { client_id: b.clientId, client_secret: b.clientSecret, region: b.region, client_secret_expires_at: b.secretExpiresAt }
       const profileArn = await firstProfileArn(tok)
       await writeNative({ tok, reg: registration, profileArn })
-      console.log(`login ok${profileArn ? "" : " (defina KIRO_PROFILE_ARN — perfil não resolvido)"} → ${NATIVE_STORE}`)
-      return
+      cached = undefined
+      return { profileArn, accessToken: tr.accessToken, refreshToken: tr.refreshToken, expiresAt }
     }
     if (tr.error === "slow_down") interval += 5000
     else if (tr.error && tr.error !== "authorization_pending") throw new Error(`login falhou: ${tr.error} ${tr.error_description ?? ""}`)
   }
   throw new Error("login expirou sem aprovação")
+}
+
+export async function login(opts: { startUrl?: string; region?: string } = {}): Promise<void> {
+  const b = await beginLogin(opts)
+  console.log(`\nAbra e aprove:\n  ${b.url}\n  (código: ${b.userCode})\n`)
+  const r = await completeLogin(b)
+  console.log(`login ok${r.profileArn ? "" : " (defina KIRO_PROFILE_ARN — perfil não resolvido)"} → ${NATIVE_STORE}`)
 }
 
 function amzHeaders(auth: KiroAuth, target: string, api: string): Record<string, string> {

@@ -212,7 +212,23 @@ async function firstProfileArn(tok) {
     return void 0;
   }
 }
-async function login(opts = {}) {
+function oidcPost(region, path, body) {
+  return fetch(`https://oidc.${region}.amazonaws.com${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  }).then(async (r) => {
+    const t = await r.text();
+    let j = {};
+    try {
+      j = t ? JSON.parse(t) : {};
+    } catch {
+    }
+    if (!r.ok && !j.error) throw new Error(`${path} ${r.status}: ${t}`);
+    return { status: r.status, ...j };
+  });
+}
+async function beginLogin(opts = {}) {
   var _a;
   const region = opts.region ?? process.env.KIRO_REGION ?? "us-east-1";
   let startUrl = opts.startUrl ?? process.env.KIRO_START_URL;
@@ -224,21 +240,7 @@ async function login(opts = {}) {
       startUrl = DEFAULT_START_URL;
     }
   }
-  const oidc = `https://oidc.${region}.amazonaws.com`;
-  const post = async (path, body) => {
-    const r = await fetch(oidc + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const t = await r.text();
-    let j = {};
-    try {
-      j = t ? JSON.parse(t) : {};
-    } catch {
-    }
-    if (!r.ok && !j.error) throw new Error(`${path} ${r.status}: ${t}`);
-    return { status: r.status, ...j };
-  };
-  let clientId;
-  let clientSecret;
-  let secretExpiresAt;
+  let clientId, clientSecret, secretExpiresAt;
   const prev = (_a = await readNative()) == null ? void 0 : _a.reg;
   const prevValid = (prev == null ? void 0 : prev.client_id) && (prev == null ? void 0 : prev.client_secret) && (!prev.client_secret_expires_at || prev.client_secret_expires_at * 1e3 > Date.now() + 6e4);
   if (prevValid) {
@@ -246,45 +248,58 @@ async function login(opts = {}) {
     clientSecret = prev.client_secret;
     secretExpiresAt = prev.client_secret_expires_at;
   } else {
-    const reg = await post("/client/register", { clientName: "kiro-native", clientType: "public", scopes: SCOPES });
+    const reg = await oidcPost(region, "/client/register", { clientName: "kiro-native", clientType: "public", scopes: SCOPES });
     clientId = reg.clientId;
     clientSecret = reg.clientSecret;
     secretExpiresAt = reg.clientSecretExpiresAt;
   }
-  const dev = await post("/device_authorization", { clientId, clientSecret, startUrl });
-  console.log(`
-Abra e aprove:
-  ${dev.verificationUriComplete}
-  (c\xF3digo: ${dev.userCode})
-`);
-  let interval = (dev.interval ?? 5) * 1e3;
-  const deadline = Date.now() + (dev.expiresIn ?? 600) * 1e3;
-  while (Date.now() < deadline) {
+  const dev = await oidcPost(region, "/device_authorization", { clientId, clientSecret, startUrl });
+  return {
+    url: dev.verificationUriComplete,
+    userCode: dev.userCode,
+    deviceCode: dev.deviceCode,
+    clientId,
+    clientSecret,
+    secretExpiresAt,
+    region,
+    startUrl,
+    intervalMs: (dev.interval ?? 5) * 1e3,
+    expiresAt: Date.now() + (dev.expiresIn ?? 600) * 1e3
+  };
+}
+async function completeLogin(b) {
+  let interval = b.intervalMs;
+  while (Date.now() < b.expiresAt) {
     await new Promise((r) => setTimeout(r, interval));
-    const tr = await post("/token", {
-      clientId,
-      clientSecret,
+    const tr = await oidcPost(b.region, "/token", {
+      clientId: b.clientId,
+      clientSecret: b.clientSecret,
       grantType: "urn:ietf:params:oauth:grant-type:device_code",
-      deviceCode: dev.deviceCode
+      deviceCode: b.deviceCode
     });
     if (tr.accessToken) {
-      const tok = {
-        access_token: tr.accessToken,
-        refresh_token: tr.refreshToken,
-        expires_at: new Date(Date.now() + tr.expiresIn * 1e3).toISOString(),
-        region,
-        start_url: startUrl
-      };
-      const registration = { client_id: clientId, client_secret: clientSecret, region, client_secret_expires_at: secretExpiresAt };
+      const expiresAt = new Date(Date.now() + tr.expiresIn * 1e3).toISOString();
+      const tok = { access_token: tr.accessToken, refresh_token: tr.refreshToken, expires_at: expiresAt, region: b.region, start_url: b.startUrl };
+      const registration = { client_id: b.clientId, client_secret: b.clientSecret, region: b.region, client_secret_expires_at: b.secretExpiresAt };
       const profileArn = await firstProfileArn(tok);
       await writeNative({ tok, reg: registration, profileArn });
-      console.log(`login ok${profileArn ? "" : " (defina KIRO_PROFILE_ARN \u2014 perfil n\xE3o resolvido)"} \u2192 ${NATIVE_STORE}`);
-      return;
+      cached = void 0;
+      return { profileArn, accessToken: tr.accessToken, refreshToken: tr.refreshToken, expiresAt };
     }
     if (tr.error === "slow_down") interval += 5e3;
     else if (tr.error && tr.error !== "authorization_pending") throw new Error(`login falhou: ${tr.error} ${tr.error_description ?? ""}`);
   }
   throw new Error("login expirou sem aprova\xE7\xE3o");
+}
+async function login(opts = {}) {
+  const b = await beginLogin(opts);
+  console.log(`
+Abra e aprove:
+  ${b.url}
+  (c\xF3digo: ${b.userCode})
+`);
+  const r = await completeLogin(b);
+  console.log(`login ok${r.profileArn ? "" : " (defina KIRO_PROFILE_ARN \u2014 perfil n\xE3o resolvido)"} \u2192 ${NATIVE_STORE}`);
 }
 function amzHeaders(auth, target, api) {
   return {
@@ -588,17 +603,18 @@ var KiroNativeLanguageModel = class {
   }
 };
 
-// src/index.ts
+// src/provider.ts
 function createKiroNative(_options = {}) {
   const make = (modelId) => new KiroNativeLanguageModel(modelId);
-  return {
-    languageModel: make,
-    chat: make
-  };
+  return { languageModel: make, chat: make };
 }
+
+// src/index.ts
 var index_default = createKiroNative;
 export {
   KiroNativeLanguageModel,
+  beginLogin,
+  completeLogin,
   createKiroNative,
   index_default as default,
   listModels,
