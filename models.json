@@ -1,0 +1,98 @@
+{
+  "auto": {
+    "name": "Auto",
+    "tool_call": true,
+    "limit": {
+      "context": 1000000,
+      "output": 64000
+    }
+  },
+  "claude-opus-5.5": {
+    "name": "Claude Opus 5.5",
+    "tool_call": true,
+    "limit": {
+      "context": 1000000,
+      "output": 128000
+    }
+  },
+  "claude-sonnet-5.5": {
+    "name": "Claude Sonnet 5.5",
+    "tool_call": true,
+    "limit": {
+      "context": 1000000,
+      "output": 128000
+    }
+  },
+  "gpt-5.6-sol": {
+    "name": "GPT-5.6 Sol",
+    "tool_call": true,
+    "limit": {
+      "context": 1000000,
+      "output": 128000
+    }
+  },
+  "gpt-5.6-terra": {
+    "name": "GPT-5.6 Terra",
+    "tool_call": true,
+    "limit": {
+      "context": 1000000,
+      "output": 128000
+    }
+  },
+  "gpt-5.6-luna": {
+    "name": "GPT-5.6 Luna",
+    "tool_call": true,
+    "limit": {
+      "context": 1000000,
+      "output": 128000
+    }
+  },
+  "claude-fable-5.1": {
+    "name": "Claude Fable 5.1",
+    "tool_call": true,
+    "limit": {
+      "context": 1000000,
+      "output": 128000
+    }
+  },
+  "claude-haiku-4.5": {
+    "name": "Claude Haiku 4.5",
+    "tool_call": true,
+    "limit": {
+      "context": 200000,
+      "output": 64000
+    }
+  },
+  "deepseek-3.2": {
+    "name": "DeepSeek 3.2",
+    "tool_call": true,
+    "limit": {
+      "context": 164000,
+      "output": 64000
+    }
+  },
+  "minimax-m2.5": {
+    "name": "MiniMax M2.5",
+    "tool_call": true,
+    "limit": {
+      "context": 196000,
+      "output": 64000
+    }
+  },
+  "glm-5": {
+    "name": "GLM-5",
+    "tool_call": true,
+    "limit": {
+      "context": 200000,
+      "output": 64000
+    }
+  },
+  "qwen3-coder-next": {
+    "name": "Qwen3 Coder Next",
+    "tool_call": true,
+    "limit": {
+      "context": 256000,
+      "output": 64000
+    }
+  }
+}

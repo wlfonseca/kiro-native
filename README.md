@@ -28,16 +28,13 @@ Add the provider to your opencode config (`~/.config/opencode/opencode.json`), p
     "kiro-native": {
       "npm": "/absolute/path/to/kiro-native",
       "name": "Kiro Native",
-      "models": {
-        "glm-5": { "name": "GLM-5", "limit": { "context": 200000, "output": 64000 } },
-        "claude-sonnet-5.5": { "name": "Claude Sonnet 5.5", "limit": { "context": 1000000, "output": 128000 } }
-      }
+      "models": "see models.json"
     }
   }
 }
 ```
 
-Then select `kiro-native/glm-5` (or any model id) in opencode. The full model list comes from the Kiro catalog — see `src/kiro.ts` `listModels()` to generate the complete `models` block.
+Copy the ready-made 12-model block from [`models.json`](./models.json) into the `models` field above (or regenerate it from the live catalog — see `listModels()` in `src/kiro.ts`). Then select `kiro-native/glm-5` (or any model) in opencode.
 
 ## How it works
 
