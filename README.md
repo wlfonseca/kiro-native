@@ -28,13 +28,110 @@ Add the provider to your opencode config (`~/.config/opencode/opencode.json`), p
     "kiro-native": {
       "npm": "/absolute/path/to/kiro-native",
       "name": "Kiro Native",
-      "models": "see models.json"
+      "models":       {
+        "auto": {
+          "name": "Auto",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 64000
+          }
+        },
+        "claude-opus-5.5": {
+          "name": "Claude Opus 5.5",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          }
+        },
+        "claude-sonnet-5.5": {
+          "name": "Claude Sonnet 5.5",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          }
+        },
+        "gpt-5.6-sol": {
+          "name": "GPT-5.6 Sol",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          }
+        },
+        "gpt-5.6-terra": {
+          "name": "GPT-5.6 Terra",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          }
+        },
+        "gpt-5.6-luna": {
+          "name": "GPT-5.6 Luna",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          }
+        },
+        "claude-fable-5.1": {
+          "name": "Claude Fable 5.1",
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          }
+        },
+        "claude-haiku-4.5": {
+          "name": "Claude Haiku 4.5",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 64000
+          }
+        },
+        "deepseek-3.2": {
+          "name": "DeepSeek 3.2",
+          "tool_call": true,
+          "limit": {
+            "context": 164000,
+            "output": 64000
+          }
+        },
+        "minimax-m2.5": {
+          "name": "MiniMax M2.5",
+          "tool_call": true,
+          "limit": {
+            "context": 196000,
+            "output": 64000
+          }
+        },
+        "glm-5": {
+          "name": "GLM-5",
+          "tool_call": true,
+          "limit": {
+            "context": 200000,
+            "output": 64000
+          }
+        },
+        "qwen3-coder-next": {
+          "name": "Qwen3 Coder Next",
+          "tool_call": true,
+          "limit": {
+            "context": 256000,
+            "output": 64000
+          }
+        }
+      }
     }
   }
 }
 ```
 
-Copy the ready-made 12-model block from [`models.json`](./models.json) into the `models` field above (or regenerate it from the live catalog — see `listModels()` in `src/kiro.ts`). Then select `kiro-native/glm-5` (or any model) in opencode.
+The `models` value is a JSON **object** (not a string) — the block above is the full catalog, also in [`models.json`](./models.json). Regenerate it from the live catalog with `listModels()` in `src/kiro.ts`. Then select `kiro-native/glm-5` (or any model) in opencode.
 
 ## How it works
 
