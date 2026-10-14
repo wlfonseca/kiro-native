@@ -59,7 +59,7 @@ async function readSqliteValue(dbPath: string, key: string, table = "auth_kv"): 
   return undefined
 }
 
-const DB_PATH = join(homedir(), ".local", "share", "kiro-cli", "data.sqlite3")
+const DB_PATH = process.env.KIRO_DB_PATH ?? join(homedir(), ".local", "share", "kiro-cli", "data.sqlite3")
 const TOKEN_KEY = "kirocli:odic:token"
 const REG_KEY = "kirocli:odic:device-registration"
 const NATIVE_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "kiro-native")
@@ -117,13 +117,14 @@ async function writeNative(src: { tok: StoredToken; reg?: Registration; profileA
 }
 
 async function readKiroCli(): Promise<AuthSource | undefined> {
-  const raw = await readSqliteValue(DB_PATH, TOKEN_KEY)
-  if (!raw) return undefined
-  const tok = JSON.parse(raw) as StoredToken
-  let reg: Registration | undefined
-  const regRaw = await readSqliteValue(DB_PATH, REG_KEY)
-  if (regRaw) reg = JSON.parse(regRaw)
-  return { tok, reg, source: "kirocli" }
+  try {
+    const raw = await readSqliteValue(DB_PATH, TOKEN_KEY)
+    if (!raw) return undefined
+    const tok = JSON.parse(raw) as StoredToken
+    let reg: Registration | undefined
+    try { const regRaw = await readSqliteValue(DB_PATH, REG_KEY); if (regRaw) reg = JSON.parse(regRaw) } catch {}
+    return { tok, reg, source: "kirocli" }
+  } catch { return undefined }
 }
 
 async function loadSource(): Promise<AuthSource> {
@@ -268,7 +269,7 @@ export async function beginLogin(opts: { startUrl?: string; region?: string } = 
 export async function completeLogin(b: LoginBegin): Promise<{ profileArn?: string; accessToken: string; refreshToken?: string; expiresAt: string }> {
   let interval = b.intervalMs
   while (Date.now() < b.expiresAt) {
-    await new Promise((r) => setTimeout(r, interval))
+    await new Promise<void>((r) => { const t = setTimeout(r, interval); (t as any).unref?.() })
     const tr = await oidcPost(b.region, "/token", {
       clientId: b.clientId, clientSecret: b.clientSecret,
       grantType: "urn:ietf:params:oauth:grant-type:device_code", deviceCode: b.deviceCode,
@@ -293,6 +294,22 @@ export async function login(opts: { startUrl?: string; region?: string } = {}): 
   console.log(`\nAbra e aprove:\n  ${b.url}\n  (código: ${b.userCode})\n`)
   const r = await completeLogin(b)
   console.log(`login ok${r.profileArn ? "" : " (defina KIRO_PROFILE_ARN — perfil não resolvido)"} → ${NATIVE_STORE}`)
+}
+
+let pendingLogin: { begin: LoginBegin; done: Promise<void> } | undefined
+
+function loginMsg(b: LoginBegin): string {
+  return `🔐 **Login Kiro necessário.**\n\nAbra e aprove no navegador:\n\n  ${b.url}\n\n  (código: ${b.userCode})\n\nDepois de aprovar, **envie a mensagem novamente** — o login é concluído em segundo plano.\n`
+}
+
+export async function authMessage(): Promise<string | undefined> {
+  try { await loadAuth(); return undefined } catch {}
+  if (!pendingLogin) {
+    const begin = await beginLogin()
+    const done = completeLogin(begin).then(() => {}).catch(() => {}).finally(() => { pendingLogin = undefined })
+    pendingLogin = { begin, done }
+  }
+  return loginMsg(pendingLogin.begin)
 }
 
 function amzHeaders(auth: KiroAuth, target: string, api: string): Record<string, string> {

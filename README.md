@@ -145,6 +145,8 @@ It prints a URL + code; open it, approve, done. The token is stored in `~/.local
 
 If you already use `kiro-cli`, you can skip this — the provider falls back to the token `kiro-cli` stores.
 
+**Auto-login:** if there is no valid token when you send a message, the provider shows the approval URL right in the chat and finishes the login in the background; approve in the browser and send your message again. `npm run login` is the explicit, guaranteed path.
+
 ## How it works
 
 - **Auth**: uses the token from this package's own login (`~/.local/share/kiro-native/auth.json`) when present, otherwise falls back to the one `kiro-cli` stores (`~/.local/share/kiro-cli/data.sqlite3`). Refreshes automatically via AWS SSO OIDC when near expiry or on `401/403`, writing the rotated token back to whichever store it came from.

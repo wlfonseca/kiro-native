@@ -1,4 +1,4 @@
-import { generate } from "./kiro.js"
+import { generate, authMessage } from "./kiro.js"
 
 type Part = { type: string; [k: string]: any }
 
@@ -122,6 +122,8 @@ export class KiroNativeLanguageModel {
         const toolAcc = new Map<string, { name: string; input: string; started: boolean }>()
         let hadTool = false
         try {
+          const loginNeeded = await authMessage()
+          if (loginNeeded) { controller.error(new Error(loginNeeded)); return }
           controller.enqueue({ type: "stream-start", warnings: [] })
           for await (const ev of generate({ history, currentMessage })) {
             if (ev.type === "assistantResponseEvent") {
@@ -171,6 +173,8 @@ export class KiroNativeLanguageModel {
   }
 
   async doGenerate(options: any): Promise<any> {
+    const loginNeeded = await authMessage()
+    if (loginNeeded) throw new Error(loginNeeded)
     const { history, currentMessage } = buildConversation(options.prompt, options.tools, this.modelId)
     const content: any[] = []
     let text = ""

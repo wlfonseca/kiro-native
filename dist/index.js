@@ -63,7 +63,7 @@ async function readSqliteValue(dbPath, key, table = "auth_kv") {
   if (errs.length) throw new Error("sqlite read failed: " + errs.join(" | "));
   return void 0;
 }
-var DB_PATH = join(homedir(), ".local", "share", "kiro-cli", "data.sqlite3");
+var DB_PATH = process.env.KIRO_DB_PATH ?? join(homedir(), ".local", "share", "kiro-cli", "data.sqlite3");
 var TOKEN_KEY = "kirocli:odic:token";
 var REG_KEY = "kirocli:odic:device-registration";
 var NATIVE_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "kiro-native");
@@ -114,13 +114,20 @@ async function writeNative(src) {
   fs.writeFileSync(NATIVE_STORE, JSON.stringify(out, null, 2), { mode: 384 });
 }
 async function readKiroCli() {
-  const raw = await readSqliteValue(DB_PATH, TOKEN_KEY);
-  if (!raw) return void 0;
-  const tok = JSON.parse(raw);
-  let reg;
-  const regRaw = await readSqliteValue(DB_PATH, REG_KEY);
-  if (regRaw) reg = JSON.parse(regRaw);
-  return { tok, reg, source: "kirocli" };
+  try {
+    const raw = await readSqliteValue(DB_PATH, TOKEN_KEY);
+    if (!raw) return void 0;
+    const tok = JSON.parse(raw);
+    let reg;
+    try {
+      const regRaw = await readSqliteValue(DB_PATH, REG_KEY);
+      if (regRaw) reg = JSON.parse(regRaw);
+    } catch {
+    }
+    return { tok, reg, source: "kirocli" };
+  } catch {
+    return void 0;
+  }
 }
 async function loadSource() {
   const src = await readNative() ?? await readKiroCli();
@@ -270,7 +277,11 @@ async function beginLogin(opts = {}) {
 async function completeLogin(b) {
   let interval = b.intervalMs;
   while (Date.now() < b.expiresAt) {
-    await new Promise((r) => setTimeout(r, interval));
+    await new Promise((r) => {
+      var _a;
+      const t = setTimeout(r, interval);
+      (_a = t.unref) == null ? void 0 : _a.call(t);
+    });
     const tr = await oidcPost(b.region, "/token", {
       clientId: b.clientId,
       clientSecret: b.clientSecret,
@@ -300,6 +311,36 @@ Abra e aprove:
 `);
   const r = await completeLogin(b);
   console.log(`login ok${r.profileArn ? "" : " (defina KIRO_PROFILE_ARN \u2014 perfil n\xE3o resolvido)"} \u2192 ${NATIVE_STORE}`);
+}
+var pendingLogin;
+function loginMsg(b) {
+  return `\u{1F510} **Login Kiro necess\xE1rio.**
+
+Abra e aprove no navegador:
+
+  ${b.url}
+
+  (c\xF3digo: ${b.userCode})
+
+Depois de aprovar, **envie a mensagem novamente** \u2014 o login \xE9 conclu\xEDdo em segundo plano.
+`;
+}
+async function authMessage() {
+  try {
+    await loadAuth();
+    return void 0;
+  } catch {
+  }
+  if (!pendingLogin) {
+    const begin = await beginLogin();
+    const done = completeLogin(begin).then(() => {
+    }).catch(() => {
+    }).finally(() => {
+      pendingLogin = void 0;
+    });
+    pendingLogin = { begin, done };
+  }
+  return loginMsg(pendingLogin.begin);
 }
 function amzHeaders(auth, target, api) {
   return {
@@ -513,6 +554,11 @@ var KiroNativeLanguageModel = class {
         const toolAcc = /* @__PURE__ */ new Map();
         let hadTool = false;
         try {
+          const loginNeeded = await authMessage();
+          if (loginNeeded) {
+            controller.error(new Error(loginNeeded));
+            return;
+          }
           controller.enqueue({ type: "stream-start", warnings: [] });
           for await (const ev of generate({ history, currentMessage })) {
             if (ev.type === "assistantResponseEvent") {
@@ -569,6 +615,8 @@ var KiroNativeLanguageModel = class {
   }
   async doGenerate(options) {
     var _a, _b;
+    const loginNeeded = await authMessage();
+    if (loginNeeded) throw new Error(loginNeeded);
     const { history, currentMessage } = buildConversation(options.prompt, options.tools, this.modelId);
     const content = [];
     let text = "";
