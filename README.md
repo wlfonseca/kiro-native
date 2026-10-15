@@ -17,10 +17,24 @@ The existing integration path runs `kiro-cli` as a subprocess and talks the Agen
 
 ```bash
 git clone https://github.com/wlfonseca/kiro-native && cd kiro-native
-npm install && npm run build
+./install.sh
 ```
 
-Add the provider to your opencode config (`~/.config/opencode/opencode.json`), pointing `npm` at the absolute path of the checkout:
+`install.sh` builds the package and wires the provider into opencode for you:
+
+- runs `npm install` + `npm run build`
+- finds the config opencode actually reads — `opencode.jsonc` takes precedence over `opencode.json`; if neither exists it creates `opencode.json`
+- backs the config up (`<file>.bak.<timestamp>`) before touching it
+- merges `provider.kiro-native` (12 models from `models.json`, `npm` = this checkout's absolute path) without dropping anything else already in the config
+- validates with `opencode models`
+
+It is idempotent — re-run it after a `git pull` to pick up model or code changes. Env override: `OPENCODE_CONFIG_DIR` (default `~/.config/opencode`).
+
+> **Why the script instead of hand-editing the config:** opencode reads `opencode.jsonc` in preference to `opencode.json`. If some other tool later drops an `opencode.jsonc` next to your `opencode.json`, a provider you wrote only into the `.json` silently disappears. The script always targets the file opencode is actually reading.
+
+### Manual
+
+Prefer to wire it by hand? Build it (`npm install && npm run build`) and add the provider to the config opencode reads, pointing `npm` at the absolute path of the checkout:
 
 ```json
 {
