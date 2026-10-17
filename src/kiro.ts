@@ -269,7 +269,7 @@ export async function beginLogin(opts: { startUrl?: string; region?: string } = 
 export async function completeLogin(b: LoginBegin): Promise<{ profileArn?: string; accessToken: string; refreshToken?: string; expiresAt: string }> {
   let interval = b.intervalMs
   while (Date.now() < b.expiresAt) {
-    await new Promise<void>((r) => { const t = setTimeout(r, interval); (t as any).unref?.() })
+    await new Promise<void>((r) => setTimeout(r, interval))
     const tr = await oidcPost(b.region, "/token", {
       clientId: b.clientId, clientSecret: b.clientSecret,
       grantType: "urn:ietf:params:oauth:grant-type:device_code", deviceCode: b.deviceCode,

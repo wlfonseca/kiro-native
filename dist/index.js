@@ -277,11 +277,7 @@ async function beginLogin(opts = {}) {
 async function completeLogin(b) {
   let interval = b.intervalMs;
   while (Date.now() < b.expiresAt) {
-    await new Promise((r) => {
-      var _a;
-      const t = setTimeout(r, interval);
-      (_a = t.unref) == null ? void 0 : _a.call(t);
-    });
+    await new Promise((r) => setTimeout(r, interval));
     const tr = await oidcPost(b.region, "/token", {
       clientId: b.clientId,
       clientSecret: b.clientSecret,
