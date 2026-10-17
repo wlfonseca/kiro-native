@@ -6,6 +6,33 @@ function partsText(parts: Part[]): string {
   return parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("")
 }
 
+const IMAGE_FORMATS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpeg",
+  "image/jpg": "jpeg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+}
+
+function imageBlocks(parts: Part[]): any[] {
+  const images: any[] = []
+  for (const p of parts) {
+    if (p.type !== "file") continue
+    const mediaType = String(p.mediaType ?? "").toLowerCase()
+    if (!mediaType.startsWith("image/")) continue
+    const format = IMAGE_FORMATS[mediaType]
+    if (!format) continue
+    const data = p.data
+    let bytes: string
+    if (data instanceof Uint8Array) bytes = Buffer.from(data).toString("base64")
+    else if (typeof data === "string" && data.startsWith("data:")) bytes = data.slice(data.indexOf(",") + 1)
+    else if (typeof data === "string") bytes = data
+    else continue
+    images.push({ format, source: { bytes } })
+  }
+  return images
+}
+
 function toolResultBlock(output: any): any {
   if (!output) return { text: "" }
   if (output.type === "text" || output.type === "error-text") return { text: String(output.value ?? "") }
@@ -44,7 +71,10 @@ function buildConversation(prompt: any[], tools: any[] | undefined, modelId: str
     }
     const parts: Part[] = Array.isArray(m.content) ? m.content : [{ type: "text", text: String(m.content ?? "") }]
     if (role === "user") {
-      msgs.push({ userInputMessage: { content: partsText(parts) || "", origin: "KIRO_CLI", userInputMessageContext: {} } })
+      const images = imageBlocks(parts)
+      const userInputMessage: any = { content: partsText(parts) || "", origin: "KIRO_CLI", userInputMessageContext: {} }
+      if (images.length) userInputMessage.images = images
+      msgs.push({ userInputMessage })
     } else if (role === "assistant") {
       const toolUses = parts
         .filter((p) => p.type === "tool-call")
